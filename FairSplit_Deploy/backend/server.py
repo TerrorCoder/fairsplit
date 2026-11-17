@@ -71,7 +71,8 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:settings={}
         info={'id':s['id'],'title':s['title'],'institution':s['institution'],'description':s['description'] or '', 'created':s['created'],'total':total,'assigned':used,'remaining':total-used,'closed':bool(s['closed']),'settings':settings}
         if settings.get('public_roster'):
-            info['assignments']=[dict(r) for r in c.execute('SELECT a.alias,a.number,q.question FROM assignments a JOIN questions q ON q.session=a.session AND q.number=a.number WHERE a.session=? ORDER BY a.alias COLLATE NOCASE',(s['id'],))]
+            order='LOWER(a.alias)' if PG else 'a.alias COLLATE NOCASE'
+            info['assignments']=[dict(r) for r in c.execute(f'SELECT a.alias,a.number,q.question FROM assignments a JOIN questions q ON q.session=a.session AND q.number=a.number WHERE a.session=? ORDER BY {order}',(s['id'],))]
         return info
     def do_OPTIONS(self):
         origin=self.headers.get('Origin','')
