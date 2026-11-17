@@ -50,6 +50,13 @@ with tempfile.TemporaryDirectory() as tmp:
         assert status==200 and d2['assignments'][0]['gender']==''
         assert call(f'/api/sessions/{sid}/update',{'closed':True},headers={'X-Organizer-Key':key})[0]==200
         assert call(f'/api/sessions/{sid}/join',{'alias':'new'})[0]==409
-        print('PASS: health, session, 4 unique draws, retrieval, exhaustion, admin protection, consent, close')
+        status,direct=call('/api/sessions',{'title':'Direct split','questions':['q1','q1','q2','q2'],'aliases':['Tariro','Alex','Munya','Rudo'],'public_roster':True})
+        assert status==201,direct
+        status,public=call(f"/api/sessions/{direct['id']}")
+        assert status==200 and len(public['assignments'])==4
+        assert {x['alias'] for x in public['assignments']}=={'Tariro','Alex','Munya','Rudo'}
+        assert sorted(x['question'] for x in public['assignments'])==['q1','q1','q2','q2']
+        assert call('/api/sessions',{'title':'Bad direct split','questions':['q1'],'aliases':['A','B']})[0]==400
+        print('PASS: health, self-join, direct split, public roster, admin protection, consent, close')
     finally:
         proc.terminate();proc.wait(timeout=5)

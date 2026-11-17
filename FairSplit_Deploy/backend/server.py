@@ -69,7 +69,10 @@ class Handler(BaseHTTPRequestHandler):
         used=c.execute('SELECT COUNT(*) AS n FROM assignments WHERE session=?',(s['id'],)).fetchone()['n']
         try:settings=json.loads(s['settings'] or '{}')
         except ValueError:settings={}
-        return {'id':s['id'],'title':s['title'],'institution':s['institution'],'description':s['description'] or '', 'created':s['created'],'total':total,'assigned':used,'remaining':total-used,'closed':bool(s['closed']),'settings':settings}
+        info={'id':s['id'],'title':s['title'],'institution':s['institution'],'description':s['description'] or '', 'created':s['created'],'total':total,'assigned':used,'remaining':total-used,'closed':bool(s['closed']),'settings':settings}
+        if settings.get('public_roster'):
+            info['assignments']=[dict(r) for r in c.execute('SELECT a.alias,a.number,q.question FROM assignments a JOIN questions q ON q.session=a.session AND q.number=a.number WHERE a.session=? ORDER BY a.alias COLLATE NOCASE',(s['id'],))]
+        return info
     def do_OPTIONS(self):
         origin=self.headers.get('Origin','')
         if origin != os.environ.get('FRONTEND_ORIGIN','http://localhost:8000').rstrip('/'):
@@ -129,13 +132,21 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError,UnicodeError,json.JSONDecodeError):return self.fail(400,'Please send valid JSON.')
         if parts==['api','sessions']:
             if limited(self.client_address[0],'create',8,3600):return self.fail(429,'Too many sessions created. Try again later.')
-            title=clean(data.get('title'),120);questions=data.get('questions',[])
+            title=clean(data.get('title'),120);questions=data.get('questions',[]);aliases=data.get('aliases',[])
             if not title or not isinstance(questions,list) or not 1<=len(questions)<=150 or any(not isinstance(v,str) or not v.strip() or len(v)>1800 for v in questions):return self.fail(400,'Enter a title and 1–150 questions (one item per line).')
-            settings={'collect_demographics':bool(data.get('collect_demographics',True)),'allow_feedback':bool(data.get('allow_feedback',True)),'show_progress':bool(data.get('show_progress',True))}
+            if not isinstance(aliases,list) or len(aliases)>150 or any(not isinstance(v,str) or not 1<=len(v.strip())<=40 for v in aliases):return self.fail(400,'Enter up to 150 student aliases, one per line.')
+            aliases=[v.strip() for v in aliases]
+            if len({v.casefold() for v in aliases})!=len(aliases):return self.fail(400,'Each student alias must be unique.')
+            if aliases and len(aliases)!=len(questions):return self.fail(400,'The number of student aliases must match the number of assignment places.')
+            settings={'collect_demographics':bool(data.get('collect_demographics',True)),'allow_feedback':bool(data.get('allow_feedback',True)),'show_progress':bool(data.get('show_progress',True)),'public_roster':bool(data.get('public_roster',bool(aliases)))}
             sid=secrets.token_urlsafe(10);key=secrets.token_urlsafe(32)
             with connect() as c:
                 c.execute('INSERT INTO sessions (id,admin_hash,title,institution,created,description,settings,closed) VALUES(?,?,?,?,?,?,?,0)',(sid,digest(key),title,clean(data.get('institution'),120),int(time.time()),clean(data.get('description'),500),json.dumps(settings)))
                 c.executemany('INSERT INTO questions(session,number,question) VALUES(?,?,?)',[(sid,i,v.strip()) for i,v in enumerate(questions,1)])
+                if aliases:
+                    numbers=list(range(1,len(questions)+1));secrets.SystemRandom().shuffle(numbers)
+                    now=int(time.time())
+                    c.executemany('INSERT INTO assignments(session,token,alias,number,gender,year,faculty,consent,created,age_band,programme) VALUES(?,?,?,?,?,?,?,?,?,?,?)',[(sid,secrets.token_urlsafe(32),alias,number,'','','',0,now,'','') for alias,number in zip(aliases,numbers)])
             return self.send(201,{'id':sid,'admin_key':key})
         if len(parts)==4 and parts[:2]==['api','sessions']:
             sid=parts[2];action=parts[3]

@@ -36,6 +36,42 @@ function updateAssignmentCount(){const questions=$('questions').value.split('\n'
 async function remodelCreateSession(){const original=$('questions').value;const questions=original.split('\n').map(s=>s.trim()).filter(Boolean);const seats=Number($('peoplePerQuestion').value);if(!Number.isInteger(seats)||seats<1||seats>50){$('createError').textContent='Choose between 1 and 50 students per question.';return}$('questions').value=questions.flatMap(q=>Array(seats).fill(q)).join('\n');await createSession();$('questions').value=original;updateAssignmentCount();$('createBtn').textContent='Create assignment links →'}
 function showTool(index){const tools=$('tools');if(!tools)return;tools.querySelectorAll('.tool-tab').forEach((tab,i)=>{tab.classList.toggle('active',i===index);tab.setAttribute('aria-selected',i===index?'true':'false')});tools.querySelectorAll('.tool-panel > .card').forEach((card,i)=>card.classList.toggle('hidden',i!==index))}
 setTimeout(remodelSite,0);
+function enhanceDirectAssignmentFlow(){
+  const questionField=$('questions')?.closest('.field');if(!questionField||$('studentAliases'))return;
+  questionField.insertAdjacentHTML('afterend','<div class="field" id="aliasField"><div class="between"><label for="studentAliases"><span class="step-label">2</span>Student aliases *</label><span id="aliasCount" class="counter">0 students</span></div><textarea id="studentAliases" rows="6" placeholder="Tariro\nAlex\nMunya\nRudo"></textarea><span class="hint">One alias per line. Use nicknames if your class prefers privacy.</span></div>');
+  const people=$('peoplePerQuestion');if(people){people.closest('.field').querySelector('.step-label').textContent='3'}
+  const aliasInput=$('studentAliases');aliasInput.addEventListener('input',updateDirectCount);
+  const mode=document.createElement('label');mode.className='checkline';mode.innerHTML='<input id="selfClaimMode" type="checkbox"><span><b>Let students join and receive a question themselves instead</b><br>Optional: FairSplit will create a participant link and students will enter their own aliases.</span>';people.closest('.field').insertAdjacentElement('afterend',mode);$('selfClaimMode').addEventListener('change',toggleAssignmentMode);
+  $('createBtn').onclick=createDirectAssignment;$('createBtn').textContent='Split questions now →';
+  updateDirectCount();
+  openParticipant=remodeledOpenParticipant;
+  if(currentSession&&!currentAdmin)remodeledOpenParticipant();
+}
+function directAliases(){return $('studentAliases').value.split('\n').map(s=>s.trim()).filter(Boolean)}
+function updateDirectCount(){const aliases=directAliases();$('aliasCount').textContent=`${aliases.length} student${aliases.length===1?'':'s'}`;updateAssignmentCount();const questions=$('questions').value.split('\n').filter(x=>x.trim()).length;const seats=Math.max(1,Number($('peoplePerQuestion').value)||1);$('createBtn').textContent=$('selfClaimMode')?.checked?'Create optional join link →':`Split ${aliases.length} students across ${questions*seats} places →`}
+function toggleAssignmentMode(){const selfClaim=$('selfClaimMode').checked;$('aliasField').classList.toggle('hidden',selfClaim);$('collect').closest('.checkline').classList.toggle('hidden',!selfClaim);$('feedbackAllowed').closest('.checkline').classList.toggle('hidden',!selfClaim);$('progressAllowed').closest('.checkline').classList.toggle('hidden',!selfClaim);updateDirectCount()}
+async function createDirectAssignment(){
+  if($('selfClaimMode').checked)return remodelCreateSession();
+  const btn=$('createBtn'),baseQuestions=$('questions').value.split('\n').map(s=>s.trim()).filter(Boolean),aliases=directAliases(),seats=Number($('peoplePerQuestion').value);
+  $('createError').textContent='';
+  if(!baseQuestions.length){$('createError').textContent='Add at least one question.';return}
+  if(!Number.isInteger(seats)||seats<1||seats>50){$('createError').textContent='Choose between 1 and 50 students per question.';return}
+  const questions=baseQuestions.flatMap(q=>Array(seats).fill(q));
+  if(!aliases.length){$('createError').textContent='Add the student aliases, one per line.';return}
+  if(new Set(aliases.map(a=>a.toLowerCase())).size!==aliases.length){$('createError').textContent='Each student alias must be different.';return}
+  if(aliases.length!==questions.length){$('createError').textContent=`You have ${aliases.length} students but ${questions.length} assignment places. Adjust the aliases or students per question.`;return}
+  btn.disabled=true;btn.textContent='Splitting the questions…';
+  try{const d=await req('/sessions','POST',{title:$('title').value,institution:$('institution').value,description:$('description').value,questions,aliases,collect_demographics:false,allow_feedback:false,show_progress:false,public_roster:true});currentSession=d.id;currentAdmin=d.admin_key;history.replaceState({},'',`/?session=${encodeURIComponent(d.id)}&admin=${encodeURIComponent(d.admin_key)}`);await openAdmin();toast('Everyone has been assigned!')}catch(e){$('createError').textContent=e.message}finally{btn.disabled=false;updateDirectCount()}
+}
+async function remodeledOpenParticipant(){
+  view('participant');$('joinError').textContent='';
+  try{sessionInfo=await req('/sessions/'+encodeURIComponent(currentSession));$('partTitle').textContent=sessionInfo.title;$('partDesc').textContent=sessionInfo.description||'Here is the full question split for your group.';$('metaTitle').textContent=sessionInfo.title;$('metaInstitution').textContent=sessionInfo.institution||'Made for study groups';
+    if(Array.isArray(sessionInfo.assignments)){const rows=sessionInfo.assignments.map(a=>`<tr><td><b>${esc(a.alias)}</b></td><td>${esc(a.question)}</td><td><span class="pill">#${a.number}</span></td></tr>`).join('');const roster=sessionInfo.assignments.map(a=>`${a.alias}: ${a.question}`).join('\n');$('joinCard').innerHTML=`<div class="between"><div><h2>Group assignments</h2><p class="subhead">Everyone can use this link to see the same list.</p></div><span class="counter">${sessionInfo.assignments.length} students</span></div><div class="scroll"><table class="data-table"><thead><tr><th>Student alias</th><th>Question</th><th>Number</th></tr></thead><tbody>${rows}</tbody></table></div><div class="toolrow"><button id="copyPublicRoster" class="btn primary small">Copy all assignments</button></div>`;$('copyPublicRoster').onclick=()=>copyText(roster);$('resultCard').classList.add('hidden');$('partProgress').textContent='Full list';return}
+    return openParticipantOriginalFallback();
+  }catch(e){$('joinError').textContent=e.message}
+}
+let openParticipantOriginalFallback=async()=>{};
+setTimeout(()=>{openParticipantOriginalFallback=openParticipant;enhanceDirectAssignmentFlow()},1);
 let currentSession=null,currentAdmin=null,currentParticipant=null,adminData=null,sessionInfo=null,clockTicker=null,secondsRemaining=300,clockRunning=false,toastTimeout=null;
 function esc(str){return String(str??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 function toast(msg){const el=$('toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>el.classList.remove('show'),3000)}

@@ -21,8 +21,11 @@ class Database:
             sql=sql.replace('alias=? COLLATE NOCASE','LOWER(alias)=LOWER(?)')
         return self.conn.execute(sql,params)
     def executemany(self,sql,rows):
-        if PG:sql=sql.replace('?','%s')
-        self.conn.executemany(sql,rows)
+        if PG:
+            sql=sql.replace('?','%s')
+            with self.conn.cursor() as cursor:
+                cursor.executemany(sql,rows)
+        else:self.conn.executemany(sql,rows)
     def __exit__(self,typ,value,tb):
         try:
             if typ:self.conn.rollback()
